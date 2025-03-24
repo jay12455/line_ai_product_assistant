@@ -142,137 +142,159 @@ def handle_message(event):
         message_text = event.message.text.strip()
         user_id = event.source.user_id
         
-        logging.info(f"\n=== 開始處理用戶消息 ===")
+        # 判斷是否為群組訊息
+        is_group = event.source.type == 'group'
+        group_id = event.source.group_id if is_group else None
+        
+        logging.info(f"\n=== 開始處理{'群組' if is_group else '個人'}消息 ===")
         logging.info(f"用戶ID: {user_id}")
         logging.info(f"消息內容: {message_text}")
         
-        # 確保用戶存在於資料庫中
+        # 進行情感分析和向量嵌入
+        sentiment_result = sentiment_analyzer.analyze_sentiment_only(message_text)
+        embedding = ai_assistant.get_embedding(message_text)
+        logging.info(f"情感分析結果: {sentiment_result}")
+        
+        # 儲存訊息記錄
+        conn = get_db_connection()
         try:
-            if not db.user_exists(user_id):
-                logging.info("新用戶，正在添加到資料庫...")
-                db.add_user(user_id)
-        except Exception as db_error:
-            logging.error(f"處理用戶資料時發生錯誤: {str(db_error)}")
-            # 繼續處理，不中斷流程
-        
-        # 處理貨物狀況查詢
-        if message_text == "貨物狀況":
-            logging.info("處理貨物狀況查詢...")
-            try:
-                packages = db.get_user_packages(user_id)
-                if packages:
-                    package_list = []
-                    for p in packages:
-                        package_info = (
-                            f"📦 商品：{p['package_name']}\n"
-                            f"📝 追蹤碼：{p['tracking_code']}\n"
-                            f"📊 狀態：{p['status']}\n"
-                        )
-                        if p['shipping_date']:
-                            package_info += f"🚚 出貨時間：{p['shipping_date'].strftime('%Y-%m-%d %H:%M')}\n"
-                        if p['delivery_date']:
-                            package_info += f"📅 預計到貨：{p['delivery_date'].strftime('%Y-%m-%d %H:%M')}\n"
-                        if p['status'] == '已送達' and p['actual_delivery_date']:
-                            package_info += f"✅ 實際到貨：{p['actual_delivery_date'].strftime('%Y-%m-%d %H:%M')}\n"
-                        package_info += "─────────────"
-                        package_list.append(package_info)
+            with conn.cursor() as cursor:
+                if is_group:
+                    # 儲存群組訊息
+                    cursor.execute("""
+                        INSERT INTO group_chat_history 
+                        (group_id, user_id, message_text, sentiment_score, 
+                         sentiment_label, created_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW())
+                    """, (
+                        group_id,
+                        user_id,
+                        message_text,
+                        sentiment_result['score'],
+                        sentiment_result['label']
+                    ))
+                    chat_id = cursor.lastrowid
                     
-                    message = f"您好，以下是您的貨物狀況：\n\n" + "\n\n".join(package_list)
-                else:
-                    message = "您目前沒有進行中的包裹"
+                    # 儲存群組訊息向量
+                    cursor.execute("""
+                        INSERT INTO group_chat_embeddings 
+                        (chat_id, embedding_vector, created_at)
+                        VALUES (%s, %s, NOW())
+                    """, (
+                        chat_id,
+                        json.dumps(embedding)
+                    ))
+                    conn.commit()
+                    return  # 群組訊息不回應
                 
-                reply_message(event.reply_token, message)
-                return
-            except Exception as package_error:
-                logging.error(f"處理貨物狀況查詢時發生錯誤: {str(package_error)}")
-                reply_message(event.reply_token, "抱歉，查詢貨物狀況時發生錯誤，請稍後再試。")
-                return
-        
-        # 處理產品搜索
-        if any(keyword in message_text for keyword in ["找", "搜尋", "查詢", "推薦", "有賣", "有沒有"]):
-            logging.info("處理產品搜索請求...")
-            try:
-                embedding = ai_assistant.get_embedding(message_text)
-                if not embedding:
-                    raise Exception("無法生成查詢的向量嵌入")
+                # 處理個人訊息
+                # 確保用戶存在於資料庫中
+                if not db.user_exists(user_id):
+                    logging.info("新用戶，正在添加到資料庫...")
+                    db.add_user(user_id)
                 
-                similar_products = ai_assistant.search_products_by_context(message_text)
-                if similar_products:
-                    product_list = []
-                    for product in similar_products:
-                        product_info = (
-                            f"📦 商品編號：{product['product_no']}\n"
-                            f"🏷️ 商品名稱：{product['product_name']}\n"
-                            f"💰 價格：{product['price_original'] if product['price_original'] else '請私訊詢問'}\n"
-                            f"🔗 商品連結：{product['product_url']}\n"
-                            f"📝 商品描述：{product['product_description'][:200]}...\n"
-                            f"─────────────"
-                        )
-                        product_list.append(product_info)
-                    
-                    message = "根據您的需求，為您推薦以下商品：\n\n" + "\n\n".join(product_list)
-                else:
-                    message = "抱歉，目前沒有找到符合您需求的商品。您可以：\n1. 使用不同的關鍵字\n2. 描述您想要的產品特點\n3. 告訴我產品的用途"
+                  # 儲存個人訊息
+                cursor.execute("""
+                    INSERT INTO personal_chat_history 
+                    (user_id, user_message, sentiment_score, 
+                     sentiment_label, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                """, (
+                    user_id,
+                    message_text,
+                    sentiment_result['score'],
+                    sentiment_result['label']
+                ))
+                chat_id = cursor.lastrowid
                 
-                reply_message(event.reply_token, message)
-                return
-            except Exception as search_error:
-                logging.error(f"處理產品搜索時發生錯誤: {str(search_error)}")
-                reply_message(event.reply_token, "抱歉，搜尋產品時發生錯誤，請稍後再試。")
-                return
-        
-        # 一般對話處理
-        logging.info("處理一般對話...")
-        try:
-            sentiment_result = sentiment_analyzer.analyze_sentiment_only(message_text)
-            logging.info(f"情感分析結果: {sentiment_result}")
-            
-            embedding = ai_assistant.get_embedding(message_text)
-            logging.info("向量嵌入生成完成")
-            
-            # 使用事務確保資料一致性
-            conn = get_db_connection()
-            try:
-                with conn.cursor() as cursor:
-                    chat_id = db.add_chat_history(
-                        line_user_id=user_id,
-                        message_text=message_text,
-                        sentiment_score=sentiment_result['score'],
-                        sentiment_label=sentiment_result['label'],
-                        embedding=embedding
-                    )
-                    logging.info(f"對話記錄已保存，ID: {chat_id}")
-                    
-                    ai_response = ai_assistant.get_response(user_id, message_text)
-                    logging.info(f"AI 回應生成完成: {ai_response}")
-                    
-                    if ai_response:
-                        reply_message(event.reply_token, ai_response)
-                        logging.info("回應已發送")
+                # 儲存個人訊息向量
+                cursor.execute("""
+                    INSERT INTO personal_chat_embeddings 
+                    (chat_id, embedding_vector, created_at)
+                    VALUES (%s, %s, NOW())
+                """, (
+                    chat_id,
+                    json.dumps(embedding)
+                ))
+                
+                # 處理不同類型的請求
+                response = None
+                if message_text == "貨物狀況":
+                    packages = db.get_user_packages(user_id)
+                    if packages:
+                        package_list = []
+                        for p in packages:
+                            package_info = (
+                                f"📦 商品：{p['package_name']}\n"
+                                f"📝 追蹤碼：{p['tracking_code']}\n"
+                                f"📊 狀態：{p['status']}\n"
+                            )
+                            if p['shipping_date']:
+                                package_info += f"🚚 出貨時間：{p['shipping_date'].strftime('%Y-%m-%d %H:%M')}\n"
+                            if p['delivery_date']:
+                                package_info += f"📅 預計到貨：{p['delivery_date'].strftime('%Y-%m-%d %H:%M')}\n"
+                            package_info += "─────────────"
+                            package_list.append(package_info)
+                        response = f"您好，以下是您的貨物狀況：\n\n" + "\n\n".join(package_list)
                     else:
-                        raise Exception("AI 回應為空")
+                        response = "您目前沒有進行中的包裹"
+                
+                elif any(keyword in message_text for keyword in ["找", "搜尋", "查詢", "推薦", "有賣", "有沒有"]):
+                    # 處理產品搜索
+                    product_categories = check_product_category(message_text)
+                    if product_categories:
+                        # 使用產品類別進行相關推薦
+                        similar_products = ai_assistant.search_products_by_context(
+                            message_text, 
+                            categories=list(product_categories.keys())
+                        )
+                    else:
+                        # 一般搜索
+                        similar_products = ai_assistant.search_products_by_context(message_text)
+                    
+                    if similar_products:
+                        product_list = []
+                        for product in similar_products[:5]:  # 限制顯示前5個結果
+                            product_info = (
+                                f"📦 商品編號：{product['product_no']}\n"
+                                f"🏷️ 商品名稱：{product['product_name']}\n"
+                                f"💰 價格：{product['price_original']}\n"
+                                f"🔗 商品連結：{product['product_url']}\n"
+                                f"📝 商品描述：{product['product_description'][:100]}...\n"
+                                f"─────────────"
+                            )
+                            product_list.append(product_info)
+                        response = "以下是您可能感興趣的商品：\n\n" + "\n\n".join(product_list)
+                    else:
+                        response = "抱歉，目前沒有找到符合的商品。您可以試試其他關鍵字。"
+                
+                else:
+                    # 一般對話處理
+                    response = ai_assistant.get_response(user_id, message_text)
+                
+                # 儲存機器人回應並發送
+                if response:
+                    reply_message(event.reply_token, response)
+                    logging.info("回應已發送")
                 
                 conn.commit()
-                logging.info("資料庫事務已提交")
-                
-            except Exception as db_error:
-                conn.rollback()
-                logging.error(f"資料庫操作失敗: {str(db_error)}")
-                raise db_error
-            finally:
-                conn.close()
-                
-        except Exception as process_error:
-            logging.error(f"處理一般對話時發生錯誤: {str(process_error)}")
-            reply_message(event.reply_token, "抱歉，處理您的訊息時發生錯誤，請稍後再試。")
-        
+                logging.info("使用者對話記錄已保存")
+        except Exception as db_error:
+            conn.rollback()
+            logging.error(f"資料庫操作失敗: {str(db_error)}")
+            if not is_group:
+                reply_message(event.reply_token, "抱歉，處理您的訊息時發生錯誤，請稍後再試。")
+        finally:
+            conn.close()
+            
     except Exception as e:
         error_msg = f"處理訊息時發生錯誤: {str(e)}"
         logging.error(error_msg, exc_info=True)
-        try:
-            reply_message(event.reply_token, "抱歉，系統暫時無法處理您的請求，請稍後再試。")
-        except Exception as reply_error:
-            logging.error(f"發送錯誤通知失敗: {str(reply_error)}")
+        if not is_group:
+            try:
+                reply_message(event.reply_token, "抱歉，系統暫時無法處理您的請求，請稍後再試。")
+            except Exception as reply_error:
+                logging.error(f"發送錯誤通知失敗: {str(reply_error)}")
     finally:
         logging.info("=== 消息處理完成 ===\n")
 
@@ -286,6 +308,7 @@ def get_recommendation_prefix(trigger_reason):
 
 @handler.add(FollowEvent)
 def handle_follow(event):
+    """處理加入好友事件"""
     user_id = event.source.user_id
     try:
         # 使用共用的 LINE API
@@ -301,20 +324,30 @@ def handle_follow(event):
             # 更新用戶的 display_name
             db.add_user(line_user_id=user_id, display_name=display_name)
             logging.info(f"更新用戶資料 - ID: {user_id}, 名稱: {display_name}")
+            
+        # 發送歡迎訊息
+        welcome_message = (
+            f"Hi {display_name}！歡迎加入！😊\n\n"
+            "我是您的智能助理，可以協助您：\n"
+            "1️⃣ 查詢商品狀態（輸入「貨物狀況」）\n"
+            "2️⃣ 搜尋/推薦商品\n"
+            "3️⃣ 回答您的問題\n\n"
+            "請問有什麼我可以幫您的嗎？"
+        )
+        reply_message(event.reply_token, welcome_message)
         
     except Exception as e:
         logging.error(f"處理追蹤事件時發生錯誤: {str(e)}")
         logging.error("錯誤詳情:", exc_info=True)
-
 @handler.add(MemberJoinedEvent)
 def handle_member_joined(event):
+    """處理新成員加入群組事件"""
     try:
         # 使用共用的 LINE API
         messaging_api = get_line_bot_api()
         
         for user in event.joined.members:
             try:
-                # 獲取用戶資料
                 profile = messaging_api.get_profile(user.user_id)
                 display_name = profile.display_name
 
