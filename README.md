@@ -296,7 +296,7 @@ graph LR
 - 問題追蹤記錄
 
 ```mermaid
-   graph TD
+graph TD
     A[使用者查詢 (LINE Bot / Web)] -->|發送請求| B[Flask API 伺服器]
     
     B -->|文本向量化| C[OpenAI Embedding API]
