@@ -14,6 +14,10 @@ DROP TABLE IF EXISTS recommendation_history;
 DROP TABLE IF EXISTS package_tracking;
 DROP TABLE IF EXISTS product_details;
 DROP TABLE IF EXISTS line_users;
+DROP TABLE IF EXISTS personal_chat_embeddings;
+DROP TABLE IF EXISTS personal_chat_history;
+DROP TABLE IF EXISTS group_chat_embeddings;
+DROP TABLE IF EXISTS group_chat_history;
 
 -- 創建 line_users 表（基礎表）
 CREATE TABLE IF NOT EXISTS line_users (
@@ -128,4 +132,54 @@ CREATE TABLE IF NOT EXISTS recommendation_history (
     INDEX idx_recommendation_product (product_no),
     INDEX idx_recommendation_created (created_at),
     INDEX idx_recommendation_status (is_clicked, is_purchased)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 群組聊天歷史記錄表
+CREATE TABLE IF NOT EXISTS group_chat_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(50) NOT NULL,
+    message_text TEXT NOT NULL,
+    sentiment_score FLOAT,
+    sentiment_label VARCHAR(20),
+    embedding JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_id (group_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 群組聊天向量表
+CREATE TABLE IF NOT EXISTS group_chat_embeddings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    embedding_vector JSON NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chat_id) REFERENCES group_chat_history(id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    INDEX idx_chat_id (chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 個人聊天歷史記錄表
+CREATE TABLE IF NOT EXISTS personal_chat_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL,
+    user_message TEXT NOT NULL,
+    sentiment_score FLOAT,
+    sentiment_label VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_id (user_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- 個人聊天向量表
+CREATE TABLE IF NOT EXISTS personal_chat_embeddings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    embedding_vector JSON NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chat_id) REFERENCES personal_chat_history(id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    INDEX idx_chat_id (chat_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
