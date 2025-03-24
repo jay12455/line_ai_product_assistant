@@ -294,3 +294,20 @@ graph LR
 - 自動告警機制
 - 備份恢復流程
 - 問題追蹤記錄
+
+```mermaid
+   graph TD
+    A[使用者查詢 (LINE Bot / Web)] -->|發送請求| B[Flask API 伺服器]
+    
+    B -->|文本向量化| C[OpenAI Embedding API]
+    B -->|情感分析| D[DistilBERT NLP 模型]
+    
+    C -->|生成向量| E[Qdrant 向量資料庫]
+    D -->|調整推薦策略| F[推薦系統核心]
+    
+    E -->|相似度檢索| F
+    F -->|獲取商品資訊| G[MariaDB 產品資料庫]
+    
+    G -->|返回推薦結果| B
+    B -->|顯示推薦商品| H[使用者介面 (LINE Bot / Web)]
+```
